@@ -1,0 +1,88 @@
+version: "3"
+
+services:
+
+  # Caddy web proxy to handle all web traffic
+  caddy:
+    image: caddy
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - "${VOLUME_PATH}caddy-data:/data"
+    environment:
+      TZ: ${TZ}
+      EMAIL: ${CADDY_EMAIL}
+      DOMAIN: ${HEADSCALE_URL}
+    ports:
+      - 80:80
+      - 443:443
+    networks:
+      control:
+      ui:
+      pihole:
+        ipv4_address: 172.16.0.4
+  
+  # Run headscale control panel with ui
+  control:
+    image: headscale/headscale:latest
+    restart: unless-stopped
+    command: headscale serve
+    volumes:
+      - ./headscale-config.yaml:/root/.headscale/config.yaml
+      - ${VOLUME_PATH}control:/etc/headscale
+    environment:
+      TZ: ${TZ}
+    networks:
+      control:
+
+  ui:
+    image: ghcr.io/gurucomputing/headscale-ui:latest
+    restart: unless-stopped
+    networks:
+      ui:
+
+  # Client to connect host server to tailscale
+  client:
+    image: tailscale/tailscale:stable
+    command: tailscaled
+    volumes:
+      - /var/lib:/var/lib
+      - /dev/net/tun:/dev/net/tun
+    network_mode: host
+    privileged: true
+
+  # DNS server for adblock and dns over https
+  pihole:
+    image: pihole/pihole
+    restart: unless-stopped
+    volumes:
+      - ${VOLUME_PATH}pihole-config:/etc/pihole
+      - ${VOLUME_PATH}pihole-dnsmasq:/etc/dnsmasq.d
+    environment:
+      TZ: ${TZ}
+      WEBPASSWORD: ${PIHOLE_PASSWORD}
+      PIHOLE_DNS_: 172.16.0.3#5053
+      DNSMASQ_LISTENING: all
+    ports:
+      - 53:53/tcp
+      - 53:53/udp
+    networks:
+      pihole:
+        ipv4_address: 172.16.0.2
+
+  dnshttps:
+    image: cloudflare/cloudflared
+    restart: unless-stopped
+    command: proxy-dns --address 0.0.0.0 --port 5053 --upstream https://1.1.1.1/dns-query --upstream https://1.0.0.1/dns-query 
+    networks:
+      pihole:
+        ipv4_address: 172.16.0.3
+
+networks:
+  control:
+  ui:
+  pihole:
+    ipam:
+      config:
+        - subnet: 172.16.0.0/24
+
